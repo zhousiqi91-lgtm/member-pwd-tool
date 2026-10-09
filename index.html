@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>会员密码速查</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f5f5; padding: 16px; max-width: 640px; margin: 0 auto; color:#111; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #888; font-size: 13px; margin-bottom: 16px; line-height:1.6; }
+  .stats { display: flex; gap: 8px; margin-bottom: 16px; }
+  .stat { flex: 1; background: #fff; border-radius: 8px; padding: 10px; text-align: center; font-size: 13px; color: #666; }
+  .stat b { display: block; font-size: 22px; color: #111; }
+  #search { width: 100%; font-size: 18px; padding: 14px; border: 2px solid #ddd; border-radius: 10px; outline: none; margin-bottom: 12px; background:#fff; }
+  #search:focus { border-color: #07c160; }
+  .card { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap:10px; }
+  .card.sent { opacity: 0.55; }
+  .info { min-width:0; }
+  .info .name { font-size: 17px; font-weight: bold; }
+  .info .phone { color: #666; font-size: 14px; margin-top: 2px; }
+  .info .pwd { font-size: 20px; font-family: monospace; color: #c00; margin-top: 6px; letter-spacing: 1px; word-break: break-all; }
+  .btns { display: flex; flex-direction: column; gap: 8px; flex-shrink:0; }
+  button { border: none; border-radius: 8px; padding: 12px 16px; font-size: 15px; cursor: pointer; }
+  .copy { background: #07c160; color: #fff; }
+  .mark { background: #eee; color: #333; }
+  .danger { background: #fa5151; color: #fff; }
+  .primary { background: #07c160; color: #fff; }
+  .empty { text-align: center; color: #999; padding: 40px 0; font-size: 15px; line-height:1.8; }
+  details { background: #fff; border-radius: 10px; padding: 14px; margin-top: 16px; font-size: 14px; }
+  summary { cursor: pointer; font-weight: bold; font-size:15px; padding:4px 0; }
+  textarea { width: 100%; height: 120px; margin-top: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
+  input[type=file] { width:100%; margin-top:10px; padding:12px; border:1px dashed #bbb; border-radius:8px; background:#fafafa; font-size:14px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row button { flex: 1; }
+  .tip { color: #888; font-size: 12px; margin-top: 8px; line-height: 1.7; }
+  .warn { background:#fff1f0; border:1px solid #ffa39e; border-radius:8px; padding:10px 12px; font-size:12px; line-height:1.7; color:#7a1f1a; margin-top:12px; }
+</style>
+</head>
+<body>
+<h1>会员密码速查</h1>
+<div class="sub">手机版 · 数据只存这台手机的浏览器里，不上传网络</div>
+<div class="stats">
+  <div class="stat"><b id="stTotal">0</b>共计</div>
+  <div class="stat"><b id="stSent">0</b>已发放</div>
+  <div class="stat"><b id="stTodo">0</b>待发放</div>
+</div>
+<input id="search" placeholder="输入手机号或姓名搜索" autocomplete="off">
+<div id="results"></div>
+
+<details id="importPanel">
+  <summary>📥 导入 / 管理数据（点我展开）</summary>
+  <div class="tip"><b>方法一（推荐）：</b>在电脑 Excel 里把表格另存为 CSV，再发到手机存进“文件”，下面选文件导入。<br><b>方法二：</b>从 Excel 复制「姓名、手机号、密码」三列，粘贴到文本框再点导入。</div>
+  <input type="file" id="fileInput" accept=".csv,.txt,.tsv,text/csv,text/plain">
+  <div class="row"><button class="primary" onclick="doFileImport()">导入所选文件</button></div>
+  <textarea id="importBox" placeholder="或粘贴到这里：&#10;张三&#9;13812345678&#9;aB3k9xQ2&#10;李四&#9;13987654321&#9;zX8m2pL7"></textarea>
+  <div class="row">
+    <button class="primary" onclick="doImport()">导入粘贴内容</button>
+    <button class="danger" onclick="clearData()">清空重导</button>
+  </div>
+  <div class="row">
+    <button class="mark" onclick="exportSent()">导出已发放清单</button>
+  </div>
+  <div class="warn">不要把导出的清单或密码发到群里。这个页面本身没有密码，密码只存在你导入后这台手机的浏览器里；换手机或清浏览器数据需要重新导入。</div>
+</details>
+
+<script>
+var KEY = 'pwdToolDataV1';
+var data = [];
+try { data = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { data = []; }
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch(e) { alert('浏览器存不下，请检查是否无痕模式'); } }
+function stats() {
+  var sent = data.filter(function(d){ return d.sent; }).length;
+  document.getElementById('stTotal').textContent = data.length;
+  document.getElementById('stSent').textContent = sent;
+  document.getElementById('stTodo').textContent = data.length - sent;
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+function parseRows(text) {
+  var lines = String(text || '').replace(/^\ufeff/, '').split(/\r?\n/).filter(function(l){ return l.trim(); });
+  var rows = [];
+  for (var i = 0; i < lines.length; i++) {
+    var cols = lines[i].split(/[\t,，;；]/).map(function(c){ return c.trim().replace(/^"|"$/g,''); }).filter(function(c){ return c !== ''; });
+    if (cols.length < 2) continue;
+    var joined = cols.join(' ');
+    if (/姓名|手机|密码|phone|name|password/i.test(joined) && !/1\d{10}/.test(joined)) continue;
+    var phoneIdx = -1, phone = '';
+    for (var j = 0; j < cols.length; j++) {
+      var m = cols[j].match(/1\d{10}/);
+      if (m) { phoneIdx = j; phone = m[0]; break; }
+    }
+    if (phoneIdx < 0) continue;
+    var name = phoneIdx > 0 ? cols[phoneIdx - 1] : '';
+    var pwd = phoneIdx + 1 < cols.length ? cols[phoneIdx + 1] : '';
+    if (!pwd) continue;
+    rows.push({ name: name, phone: phone, pwd: pwd, sent: false });
+  }
+  return rows;
+}
+
+function applyRows(rows) {
+  if (!rows.length) { alert('没识别到有效数据。需要每行至少有：手机号 + 密码（最好姓名、手机号、密码三列）'); return; }
+  var sentMap = {};
+  data.forEach(function(d){ if (d.sent) sentMap[d.phone] = true; });
+  var seen = {}, merged = [];
+  rows.forEach(function(r){ if (!seen[r.phone]) { seen[r.phone] = true; merged.push({ name:r.name, phone:r.phone, pwd:r.pwd, sent: !!sentMap[r.phone] }); } });
+  data = merged;
+  save(); stats(); render('');
+  alert('导入成功，共 ' + data.length + ' 条');
+}
+
+function doImport() {
+  var text = document.getElementById('importBox').value.trim();
+  if (!text) { alert('先粘贴数据'); return; }
+  applyRows(parseRows(text));
+  document.getElementById('importBox').value = '';
+}
+
+function doFileImport() {
+  var f = document.getElementById('fileInput').files[0];
+  if (!f) { alert('先选择 CSV 或 TXT 文件'); return; }
+  var reader = new FileReader();
+  reader.onload = function(){ applyRows(parseRows(String(reader.result || ''))); };
+  reader.onerror = function(){ alert('文件读取失败，换个文件再试'); };
+  reader.readAsText(f, 'UTF-8');
+}
+
+function clearData() {
+  if (!confirm('清空这台手机里的全部数据？（可重新导入）')) return;
+  data = []; save(); stats(); render('');
+}
+
+function copyPwd(pwd, btn) {
+  var done = function(){ btn.textContent = '已复制'; setTimeout(function(){ btn.textContent = '复制密码'; }, 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(pwd).then(done).catch(function(){ fallbackCopy(pwd, done); });
+  } else fallbackCopy(pwd, done);
+}
+function fallbackCopy(pwd, done) {
+  var ta = document.createElement('textarea');
+  ta.value = pwd; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta); done();
+}
+
+function toggleSent(phone) {
+  for (var i = 0; i < data.length; i++) if (data[i].phone === phone) { data[i].sent = !data[i].sent; break; }
+  save(); stats(); render(document.getElementById('search').value);
+}
+
+function exportSent() {
+  var sent = data.filter(function(d){ return d.sent; });
+  if (!sent.length) { alert('还没有发放记录'); return; }
+  var csv = '姓名,手机号,密码\n' + sent.map(function(d){ return [d.name, d.phone, d.pwd].join(','); }).join('\n');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
+  a.download = '已发放密码清单.csv'; a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 3000);
+}
+
+function render(q) {
+  q = (q || '').trim();
+  var box = document.getElementById('results');
+  if (!data.length) { box.innerHTML = '<div class="empty">还没有数据，先展开下方导入<br>从电脑把表格另存为 CSV 发到手机导入</div>'; return; }
+  if (!q) { box.innerHTML = '<div class="empty">在上方输入手机号或姓名开始查询</div>'; return; }
+  var hits = data.filter(function(d){ return d.phone.indexOf(q) >= 0 || (d.name && d.name.indexOf(q) >= 0); }).slice(0, 20);
+  if (!hits.length) { box.innerHTML = '<div class="empty">没找到，检查下手机号对不对</div>'; return; }
+  box.innerHTML = hits.map(function(d){
+    return '<div class="card' + (d.sent ? ' sent' : '') + '">'
+      + '<div class="info"><div class="name">' + esc(d.name) + (d.sent ? ' ✅' : '') + '</div>'
+      + '<div class="phone">' + esc(d.phone) + '</div>'
+      + '<div class="pwd">' + esc(d.pwd) + '</div></div>'
+      + '<div class="btns"><button class="copy" onclick="copyPwd(\'' + esc(d.pwd).replace(/'/g, "\\'") + '\', this)">复制密码</button>'
+      + '<button class="mark" onclick="toggleSent(\'' + esc(d.phone) + '\')">' + (d.sent ? '已发放' : '标发放') + '</button></div></div>';
+  }).join('');
+}
+
+document.getElementById('search').addEventListener('input', function(e){ render(e.target.value); });
+stats(); render('');
+if (!data.length) { try { document.getElementById('importPanel').open = true; } catch(e){} }
+</script>
+</body>
+</html>
